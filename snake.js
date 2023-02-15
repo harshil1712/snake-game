@@ -4,13 +4,13 @@ let Snake = function () {
     let snake = this;
     
     snake.snake = [];
-    snake.difficulty = 10;
+    snake.difficulty = 3;
     snake.gameArea = document.getElementsByClassName('game-area')[0];
     snake.startButton = document.getElementById('start-game');
     snake.stopButton = document.getElementById('stop-game');
     snake.scoreElement = document.getElementById('score');
-    snake.rowLength = 64;
-    snake.cellLength = 64;
+    snake.rowLength = 16;
+    snake.cellLength = 16;
     snake.direction = 'up';
     snake.directions = ['up', 'down', 'left', 'right'];
     snake.interval = null;
@@ -20,6 +20,15 @@ let Snake = function () {
         x: null,
         y: null
     };
+    snake.device = {}
+    snake.controlls = {
+        axes: {
+            leftStickX: 0,
+            leftStickY: 0,
+            rightStickX: 0,
+            rightStickY: 0
+        }
+    }
 
     if (!snake.gameArea || !snake.startButton || !snake.stopButton || !snake.scoreElement) {
         alert("#game-area, #start-game, #stop-game, #score id elements are required!");
@@ -32,33 +41,6 @@ let Snake = function () {
     snake.stopButton.addEventListener('click', function () {
         snake.stopGame();
     }, false);
-
-    document.onkeydown = function (event) {
-        if (snake.gameStarted) {
-            switch (event.key) {
-                case "ArrowUp":
-                    if (snake.direction !== 'down') {
-                        snake.direction = 'up';
-                    }
-                    break;
-                case "ArrowDown":
-                    if (snake.direction !== 'up') {
-                        snake.direction = 'down';
-                    }
-                    break;
-                case "ArrowLeft":
-                    if (snake.direction !== 'right') {
-                        snake.direction = 'left';
-                    }
-                    break;
-                case "ArrowRight":
-                    if (snake.direction !== 'left') {
-                        snake.direction = 'right';
-                    }
-                    break;
-            }
-        }
-    };
 };
 
 /**
@@ -155,9 +137,54 @@ Snake.prototype.renderGameArea = function () {
 /**
  * Start the game
  */
-Snake.prototype.startGame = function () {
+Snake.prototype.startGame = async function () {
     let snake = this;
+    let devices = navigator.hid && await navigator.hid.getDevices();
+    if(devices.length !== 0) {
+        snake.device = devices[0];
+        if(!snake.device.opened) {
+            await snake.device.open()
+        }
+    } else {
+        if(navigator.hid) {
+            devices = await window.navigator.hid.requestDevice({filters: [
+                { vendorId: 0x054c, productId: 0x0ce6 }
+            ]})
+            snake.device = await devices[0];
+            await snake.device.open();
+        }
+    }
     snake.gameStarted = true;
+    if(snake.device) {
+        await rumbleController(snake.device)
+        snake.device.oninputreport = async (e) => {
+            const {data, reportId} = e;
+            if(reportId === 0x01) {
+                snake.controlls.axes.leftStickX = normalizeThumbStickAxis(data.getUint8(0))
+                snake.controlls.axes.rightStickY = normalizeThumbStickAxis(data.getUint8(3))
+            }
+            if(snake.controlls.axes.leftStickX === -1) {
+                if (snake.direction !== 'right') {
+                    snake.direction = 'left';
+                }
+            }
+            if(snake.controlls.axes.leftStickX === 1) {
+                if (snake.direction !== 'left') {
+                    snake.direction = 'right';
+                }
+            }
+            if(snake.controlls.axes.rightStickY === 1) {
+                if (snake.direction !== 'up') {
+                    snake.direction = 'down';
+                }
+            }
+            if(snake.controlls.axes.rightStickY === -1) {
+                if (snake.direction !== 'down') {
+                    snake.direction = 'up';
+                }
+            }
+        }
+    }
     snake.interval = setInterval(function () {
         snake.move();
     }, 400 / snake.difficulty);
@@ -165,6 +192,8 @@ Snake.prototype.startGame = function () {
     snake.stopButton.style.display = 'block';
     snake.createBait();
 };
+
+
 
 /**
  * Stop the game
@@ -317,3 +346,27 @@ Snake.prototype.setGameArea = function (rowLength, cellLength) {
         this.createGameArea(rowLength, cellLength);
     }
 };
+
+const normalizeThumbStickAxis = value => {
+    return (2 * value / 0xFF) - 1.0;
+};
+
+const rumbleController = async (device) => {
+    const pads = navigator.getGamepads();
+    console.log(pads[0])
+    const report = new Uint8Array(16)
+
+    report[0] = 0x02;
+    report[1] = 0x01
+
+    report[4] = 0
+    report[5] = 125
+
+    console.log(report)
+    try {
+        await device.sendReport(report[0], report.slice(1))
+    } catch(error) {
+        console.log(error)
+    }
+
+}
